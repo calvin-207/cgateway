@@ -1,0 +1,12 @@
+{application, cgateway,
+    [
+        {description, "gateway service"},
+        {vsn, "1.0"},
+        {registered, []},
+        {applications, [
+            kernel,
+            stdlib
+        ]},
+        {mod, {cgateway_app, [cgateway_server, cgateway_sup, cgateway, cgateway_app, cgateway_listen_sup, cgateway_listen_server]}},
+        {env, []}
+    ]}.
