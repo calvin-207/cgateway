@@ -10,7 +10,7 @@
 -author("calvin").
 
 -behaviour(gen_server).
-
+-include("cgateway.hrl").
 %% API
 -export([start_link/1]).
 
@@ -27,7 +27,7 @@
 -record(state, {
     socket,    % client socket
     addr,       % client address
-    id
+    id = 0       %%
 }).
 
 %%%===================================================================
@@ -40,7 +40,7 @@
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec(start_link(ClientSocket::port()) ->
+-spec(start_link(ClientSocket :: port()) ->
     {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 start_link(CliSocket) ->
     gen_server:start_link(?MODULE, [CliSocket], []).
@@ -65,7 +65,6 @@ start_link(CliSocket) ->
     {stop, Reason :: term()} | ignore).
 init([Socket]) ->
     erlang:process_flag(trap_exit, true),
-    prim_inet:setopts(Socket, [{active, once}, {packet, 2}, binary]),
     {ok, {IP, Port}} = inet:peername(Socket),
     {ok, #state{socket = Socket, addr = {IP, Port}}}.
 
@@ -115,15 +114,28 @@ handle_cast(_Request, State) ->
     {noreply, NewState :: #state{}} |
     {noreply, NewState :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term(), NewState :: #state{}}).
-handle_info({tcp, Socket, Bin}, #state{socket = Socket, id = ID} = StateData) ->
-    % Flow control: enable forwarding of next TCP message
-    inet:setopts(Socket, [{active, once}]),
+handle_info({tcp, Socket, Bin}, #state{socket = Socket, id = ID} = State) when ID > 0 ->
     Decode = cgateway_parser:decode(Bin),
     cgateway_router:router(ID, Decode),
-    {noreply, StateData};
+    %% 处理完再接受信息
+    inet:setopts(Socket, [{active, once}]),
+    {noreply, State};
 handle_info({tcp_closed, Socket}, #state{socket = Socket, addr = Addr, id = ID} = StateData) ->
     error_logger:info_msg("~p Client ~p id = ~p disconnected.\n", [self(), Addr, ID]),
     {stop, normal, StateData};
+handle_info(ready_socket, #state{socket = Socket} = State) ->
+    prim_inet:setopts(Socket, [{active, once}, {packet, 2}, binary]),
+    {noreply, State};
+handle_info({start_role, ID}, #state{addr = {IP, Port}} = State) ->
+    do_start_role(ID, IP, Port),
+    {noreply, State#state{id = ID}};
+handle_info({from_server, Data}, #state{addr = Addr} = State) ->
+    error_logger:info_msg("~p Client ~p received an unknow from_server msg = ~p disconnected.\n", [self(), Addr, Data]),
+    {noreply, State};
+handle_info({to_client, Data}, #state{socket = Socket}=State) ->
+    EncodeData = cgateway_parser:encode(Data),
+    gen_tcp:send(Socket, EncodeData),
+    {noreply, State};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -157,6 +169,23 @@ terminate(_Reason, _State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
+
+
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+%% @doc login, 启动role_server， 并把相关信息交付过去。
+do_init_msg(ID, IP, Port) ->
+    case erlang:whereis(role_util:get_procress_id(ID)) of
+        undefined -> %% start role server
+            role_sup:start_child(ID, IP, Port);
+        PID -> %% role process exist update it
+            role_sup:update_child(PID, ID, IP, Port)
+    end.
+
+%%%===================================================================
+%%% procress dictionary
+%%%===================================================================
+
+

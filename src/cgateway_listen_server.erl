@@ -131,8 +131,10 @@ handle_info({inet_async, ListSock, Ref, {ok, CliSocket}},
             ok -> ok;
             {error, Reason} -> exit({set_sockopt, Reason})
         end,
-        {ok, Pid} = cgateway_client_sup:start_child(CliSocket),
-        gen_tcp:controlling_process(CliSocket, Pid),
+        %% maybe procress pool ??
+        {ok, PID} = cgateway_client_sup:start_child(CliSocket),
+        gen_tcp:controlling_process(CliSocket, PID),
+        cgateway_util:send_ready_socket(PID),
         case prim_inet:async_accept(ListSock, -1) of
             {ok, NewRef} -> ok;
             {error, NewRef} -> exit({async_accept, inet:format_error(NewRef)})
